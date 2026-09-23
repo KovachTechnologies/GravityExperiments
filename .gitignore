@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+*.h264
+*.DS_Store
+*.swp
+*.bak
