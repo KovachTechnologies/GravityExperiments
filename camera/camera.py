@@ -1,6 +1,7 @@
-# OpenMV real-time laser-spot analytics
-# Streams timestamped metrics over USB serial (or hardware UART).
-# Matches the spirit of the prior beam-analysis experiment.
+# OpenMV real-time laser-spot analytics (multi-dot / refraction case)
+# Conductive tape can split the beam into ~3 overlapping bright lobes.
+# This script finds the brightest blobs, keeps the top 3, and streams
+# each lobe's center of mass plus a pixel-weighted overall COM.
 
 import sensor
 import image
@@ -10,10 +11,12 @@ from pyb import UART          # only needed for hardware UART path
 # ---------- Configuration ----------
 USE_HARDWARE_UART = False     # True = RS232 shield / external UART; False = USB VCP
 BAUDRATE = 115200
-BRIGHT_THRESH = (200, 255)    # grayscale low/high for near-white core (tune as needed)
-MIN_PIXELS = 50
-MIN_AREA = 100
+BRIGHT_THRESH = (180, 255)    # lower bound may need to be higher so the
+                              # connecting necks drop out and lobes separate
+MIN_PIXELS = 30
+MIN_AREA = 40
 FRAMESIZE = sensor.QVGA       # or sensor.QQVGA for higher FPS
+MAX_DOTS = 3                  # expect up to 3 lobes from the tape refraction
 
 # ---------- Hardware setup ----------
 sensor.reset()
@@ -40,54 +43,63 @@ def send(line):
     else:
         print(line)
 
-# Header (optional, once)
-send("t_ms,cx,cy,cxf,cyf,area,pixels,density,rotation_deg,elongation,mean_int,edge_pixels")
+# Header: overall COM + up to 3 individual lobe COMs (sorted top-to-bottom)
+send("t_ms,n_dots,overall_cx,overall_cy,"
+     "dot1_cx,dot1_cy,dot1_area,"
+     "dot2_cx,dot2_cy,dot2_area,"
+     "dot3_cx,dot3_cy,dot3_area")
 
 while True:
     clock.tick()
     img = sensor.snapshot()
 
-    # Optional light edge detection for a roughness proxy
-    edge_count = 0
-    # edges = img.copy().find_edges(image.EDGE_SIMPLE, threshold=(40, 80))
-    # edge_count = edges.get_histogram().get_percentile(0.99).l_value()  # cheap proxy
-
+    # merge=False so that weakly-connected lobes stay separate when the
+    # connecting neck falls below BRIGHT_THRESH.
     blobs = img.find_blobs(
         [BRIGHT_THRESH],
         pixels_threshold=MIN_PIXELS,
         area_threshold=MIN_AREA,
-        merge=True,
-        margin=2,
+        merge=False,
+        margin=0,
     )
 
     t_ms = time.ticks_diff(time.ticks_ms(), start_ms)
 
     if blobs:
-        # largest blob = core
-        b = max(blobs, key=lambda x: x.pixels())
+        # Keep the largest blobs (the three bright lobes)
+        blobs.sort(key=lambda b: b.pixels(), reverse=True)
+        top = blobs[:MAX_DOTS]
 
-        # Sub-pixel centroid (preferred for deflection tracking)
-        cx = b.cx()
-        cy = b.cy()
-        cxf = getattr(b, "cxf", lambda: cx)()
-        cyf = getattr(b, "cyf", lambda: cy)()
+        # Sort the selected lobes top-to-bottom by cy so the order is stable
+        top.sort(key=lambda b: b.cy())
 
-        # Intensity stats inside the blob (same thresholds)
-        stats = img.get_statistics(roi=b.rect(), thresholds=[BRIGHT_THRESH])
-        mean_int = stats.mean()
+        # Pixel-weighted overall center of mass of the selected lobes
+        total_pixels = sum(b.pixels() for b in top)
+        if total_pixels > 0:
+            overall_cx = sum(b.cx() * b.pixels() for b in top) / total_pixels
+            overall_cy = sum(b.cy() * b.pixels() for b in top) / total_pixels
+        else:
+            overall_cx = overall_cy = 0.0
 
-        line = (
-            f"{t_ms},{cx},{cy},{cxf:.2f},{cyf:.2f},"
-            f"{b.area()},{b.pixels()},{b.density():.3f},"
-            f"{b.rotation()*57.3:.1f},{b.elongation():.3f},"
-            f"{mean_int:.1f},{edge_count}"
-        )
-        send(line)
+        # Build the fixed-width output (pad missing dots with nan)
+        parts = [str(t_ms), str(len(top)), f"{overall_cx:.2f}", f"{overall_cy:.2f}"]
+        for i in range(MAX_DOTS):
+            if i < len(top):
+                b = top[i]
+                parts.append(str(b.cx()))
+                parts.append(str(b.cy()))
+                parts.append(str(b.area()))
+                # Draw for IDE preview
+                img.draw_rectangle(b.rect(), color=127)
+                img.draw_cross(b.cx(), b.cy(), color=255)
+            else:
+                parts.extend(["nan", "nan", "0"])
 
-        # Optional drawing for IDE preview
-        img.draw_rectangle(b.rect(), color=127)
-        img.draw_cross(cx, cy, color=255)
+        # Overall COM cross (thicker / different color if desired)
+        img.draw_cross(int(overall_cx), int(overall_cy), color=200, size=8)
+
+        send(",".join(parts))
     else:
-        send(f"{t_ms},nan,nan,nan,nan,0,0,0,0,0,0,0")
+        send(f"{t_ms},0,nan,nan,nan,nan,0,nan,nan,0,nan,nan,0")
 
     # print(clock.fps())   # uncomment for FPS debug

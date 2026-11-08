@@ -2,7 +2,7 @@
 
 This note covers the real-time laser-spot tracking setup that runs on an OpenMV Cam and streams metrics to a host computer. It is the live counterpart to the offline analysis in `analyze_beam.py`.
 
-- **`camera.py`** — MicroPython script that runs on the OpenMV Cam. It captures frames, finds the bright laser core, computes center-of-mass and shape metrics, and streams one CSV line per frame.
+- **`camera.py`** — MicroPython script that runs on the OpenMV Cam. It captures frames, finds the bright laser lobes (up to three overlapping dots caused by tape refraction), computes each lobe’s center of mass plus a weighted overall COM, and streams one CSV line per frame.
 - **`server.py`** — Python script that runs on the host computer. It opens the serial port, reads the telemetry lines, prints them, and logs them to a timestamped CSV file.
 
 The board is an OpenMV Cam (red PCB with the OpenMV logo). It supports MicroPython, a full image-processing library, and TensorFlow Lite. Serial is the preferred transport; the USB cable already appears as a virtual COM port on the host.
@@ -83,9 +83,11 @@ This path is simplest, highest bandwidth, and requires no extra wiring. Baud rat
 
 You should see CSV lines in the IDE serial terminal, for example:
 ```
-t_ms,cx,cy,cxf,cyf,area,pixels,density,rotation_deg,elongation,mean_int,edge_pixels
-1520,160,120,160.34,120.12,4821,4510,0.936,12.4,0.081,248.2,0
+t_ms,n_dots,overall_cx,overall_cy,dot1_cx,dot1_cy,dot1_area,dot2_cx,dot2_cy,dot2_area,dot3_cx,dot3_cy,dot3_area
+1520,3,160.2,128.5,158,95,1200,161,130,980,162,165,1100
 ```
+
+The three dots are sorted top-to-bottom. Missing lobes are reported as `nan`. The overall COM is the pixel-count-weighted average of the detected lobes.
 
 ### On the host
 1. Edit `server.py` and set `PORT` to the correct device.
@@ -103,14 +105,11 @@ The CSV can be loaded into the same analysis tools used for the earlier offline 
 ### Metrics produced
 Each line contains:
 - `t_ms` — milliseconds since script start
-- `cx`, `cy` — integer centroid of the largest bright blob
-- `cxf`, `cyf` — sub-pixel centroid (preferred for deflection tracking)
-- `area`, `pixels`, `density` — size and fill of the blob
-- `rotation_deg`, `elongation` — orientation and shape proxies
-- `mean_int` — mean grayscale intensity inside the thresholded region
-- `edge_pixels` — placeholder for an optional edge-count / roughness proxy (currently 0)
+- `n_dots` — number of bright lobes found (0–3)
+- `overall_cx`, `overall_cy` — pixel-weighted center of mass of all selected lobes
+- `dot1_cx/cy/area`, `dot2_…`, `dot3_…` — individual lobe centers and areas, sorted top-to-bottom (padded with `nan`/`0` if fewer than three are present)
 
-These map closely to the primary metrics from the earlier offline analysis (COM, area, ellipticity-related quantities).
+Raise `BRIGHT_THRESH` if the three lobes merge into one blob; lower it if the weaker lobes disappear. The script uses `merge=False` so that necks between lobes can fall below threshold and separate the peaks.
 
 ### TensorFlow Lite
 The board can run quantized `.tflite` models via the `ml` (or older `tf`) module. For pure laser-spot tracking the classical pipeline is preferable. You can later add a small classifier (beam quality, presence/absence, anomaly) and append a confidence value to the CSV line without changing the serial protocol.

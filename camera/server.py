@@ -58,7 +58,7 @@ def main():
                     continue
 
                 parts = line.split(",")
-                if len(parts) < 11:
+                if len(parts) < 4:
                     print(f"[skip] {line}")
                     continue
 
