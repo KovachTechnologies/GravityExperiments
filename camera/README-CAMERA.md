@@ -2,8 +2,9 @@
 
 This note covers the real-time laser-spot tracking setup that runs on an OpenMV Cam and streams metrics to a host computer. It is the live counterpart to the offline analysis in `analyze_beam.py`.
 
-- **`camera.py`** — MicroPython script that runs on the OpenMV Cam. It captures frames, finds the bright laser lobes (up to three overlapping dots caused by tape refraction), computes each lobe’s center of mass plus a weighted overall COM, and streams one CSV line per frame.
-- **`server.py`** — Python script that runs on the host computer. It opens the serial port, reads the telemetry lines, prints them, and logs them to a timestamped CSV file.
+- **`camera.py`** — MicroPython script that runs on the OpenMV Cam. It captures frames, finds the bright laser lobes (up to three overlapping dots caused by tape refraction), computes each lobe’s center of mass plus a weighted overall COM, and streams one CSV line per frame over serial.
+- **`camera_local.py`** — Identical center-of-mass logic to `camera.py`, but writes the CSV lines to a local file (`beam_local.csv`) on the OpenMV filesystem instead of streaming. Use this when no host computer is connected during the run.
+- **`server.py`** — Python script that runs on the host computer. It opens the serial port, reads the telemetry lines from `camera.py`, prints them, and logs them to a timestamped CSV file.
 
 The board is an OpenMV Cam (red PCB with the OpenMV logo). It supports MicroPython, a full image-processing library, and TensorFlow Lite. Serial is the preferred transport; the USB cable already appears as a virtual COM port on the host.
 
@@ -33,14 +34,14 @@ pip install pyserial
 ```
 That is the only external dependency. The rest of the standard library is sufficient.
 
-### On the OpenMV (for `camera.py`)
-Nothing extra. The script uses only the built-in modules:
+### On the OpenMV (for `camera.py` or `camera_local.py`)
+Nothing extra. The scripts use only the built-in modules:
 - `sensor` — camera control
 - `image` — find_blobs, get_statistics, drawing
 - `time` — timestamps and FPS
-- `pyb.UART` — hardware serial (only if `USE_HARDWARE_UART = True`)
+- `pyb.UART` — hardware serial (only in `camera.py` if `USE_HARDWARE_UART = True`)
 
-No TensorFlow model is required for the basic laser-spot tracking. Classical blob detection is faster and matches the earlier offline metrics.
+`camera_local.py` writes to the OpenMV’s internal filesystem (or the root of an inserted microSD card). No additional packages are required.
 
 ## 3. Engineering details — connecting the camera
 
@@ -73,13 +74,12 @@ This path is simplest, highest bandwidth, and requires no extra wiring. Baud rat
 
 ## 4. Running the code
 
-### On the OpenMV
-1. Open the OpenMV IDE.
-2. Connect to the camera.
-3. Open `camera.py` (or paste the script).
-4. Adjust `BRIGHT_THRESH`, `FRAMESIZE`, and the `USE_HARDWARE_UART` flag if needed.
-5. Click the Run button (green arrow). The script starts immediately and begins streaming lines.
-6. Optional: save the script as `main.py` on the camera’s filesystem so it auto-runs on power-up.
+### Streaming to a host (`camera.py` + `server.py`)
+1. Open the OpenMV IDE and connect to the camera.
+2. Open `camera.py`.
+3. Adjust `BRIGHT_THRESH`, `FRAMESIZE`, and the `USE_HARDWARE_UART` flag if needed.
+4. Click the Run button (green arrow). The script begins streaming CSV lines over the serial port.
+5. Optional: save the script as `main.py` on the camera’s filesystem so it auto-runs on power-up.
 
 You should see CSV lines in the IDE serial terminal, for example:
 ```
@@ -89,7 +89,7 @@ t_ms,n_dots,overall_cx,overall_cy,dot1_cx,dot1_cy,dot1_area,dot2_cx,dot2_cy,dot2
 
 The three dots are sorted top-to-bottom. Missing lobes are reported as `nan`. The overall COM is the pixel-count-weighted average of the detected lobes.
 
-### On the host
+On the host:
 1. Edit `server.py` and set `PORT` to the correct device.
 2. Run:
    ```bash
@@ -99,6 +99,16 @@ The three dots are sorted top-to-bottom. Missing lobes are reported as `nan`. Th
 4. Stop with Ctrl-C. The CSV is flushed and closed.
 
 The CSV can be loaded into the same analysis tools used for the earlier offline runs (`analyze_beam.py` style plots, slope calculations, etc.).
+
+### Local file logging (`camera_local.py`)
+Use this variant when you want the camera to record data by itself with no host computer attached. The center-of-mass calculations are identical to `camera.py`; only the output destination changes.
+
+1. Insert a microSD card if you want the log on removable media (otherwise it writes to the internal filesystem).
+2. Open `camera_local.py` in the OpenMV IDE and run it.
+3. The script creates/overwrites `beam_local.csv` and appends one line per frame.
+4. Stop the script when finished, then copy `beam_local.csv` off the camera (via the IDE file browser or by reading the SD card).
+
+The CSV format is identical to the streaming version. The file is flushed periodically so a power loss or reset does not lose the entire run. Change `LOG_FILE` at the top of the script if you want a different name.
 
 ## 5. Additional notes
 
