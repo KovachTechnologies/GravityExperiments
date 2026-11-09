@@ -5,7 +5,6 @@ This note covers the real-time laser-spot tracking setup that runs on an OpenMV 
 - **`camera.py`** — MicroPython script that runs on the OpenMV Cam. It captures frames, finds the bright laser lobes (up to three overlapping dots caused by tape refraction), computes each lobe’s center of mass plus a weighted overall COM, and streams one JSON line per frame over USB serial. Implements the `READY:camera` / `START` / `STOP` handshake used by `aggregator.py`.
 - **`camera_local.py`** — Identical center-of-mass logic to `camera.py`, but writes the CSV lines to a local file (`beam_local.csv`) on the OpenMV filesystem instead of streaming. Use this when no host computer is connected during the run. **Not modified** by the aggregator integration.
 - **`aggregator.py`** — Host-side multi-device collector (Raspberry Pi). Discovers the camera (and other devices), sends a common `START`, and records all telemetry as JSON Lines. See `README-AGGREGATOR.md`.
-- **`server.py`** — Legacy single-device camera listener (still functional for raw lines, but the preferred path is now `aggregator.py`).
 
 The board is an OpenMV Cam (red PCB with the OpenMV logo). It supports MicroPython, a full image-processing library, and TensorFlow Lite. Serial is the preferred transport; the USB cable already appears as a virtual COM port on the host.
 
@@ -21,19 +20,12 @@ The board is an OpenMV Cam (red PCB with the OpenMV logo). It supports MicroPyth
 
 ### Software
 - **OpenMV IDE** (recommended for development and flashing). Download from [openmv.io](https://openmv.io). It installs the necessary drivers and gives you a live frame buffer, serial terminal, and one-click script upload.
-- Python 3.8+ on the host for `server.py`.
 - `pyserial` on the host (see Packages below).
 
 ### Firmware
 The OpenMV should be running a recent firmware (v4.x or later). The IDE can update the firmware automatically when you connect the camera.
 
 ## 2. Packages needed
-
-### On the host (for `server.py`)
-```bash
-pip install pyserial
-```
-That is the only external dependency. The rest of the standard library is sufficient.
 
 ### On the OpenMV (for `camera.py` or `camera_local.py`)
 Nothing extra. The scripts use only the built-in modules:
@@ -75,9 +67,6 @@ Example telemetry line:
 ```
 
 The aggregator wraps each line with `host_ts` and `device` and writes JSON Lines. See `README-AGGREGATOR.md` for the host-side details.
-
-### Legacy single-device path (`server.py`)
-`server.py` can still be used if you only have the camera and want a simple CSV log, but it expects the older CSV format. The preferred multi-device path is `aggregator.py`.
 
 ### Optical and exposure notes
 - Disable auto-gain, auto-white-balance, and auto-exposure once the scene is stable. The script does this so the brightness threshold remains valid.
